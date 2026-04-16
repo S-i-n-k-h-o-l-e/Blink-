@@ -244,6 +244,7 @@
     .stimBody{display:flex; gap:10px; flex-wrap:wrap;}
     .stimCtrls{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
     .stimUI select{ padding:8px 10px; border-radius:12px; font-weight:950; }
+    .stimUI input[type="range"]{ width:110px; }
 
     /* Full-screen stimulus moment during trial start */
     .panel.fullscreenStim{
@@ -308,6 +309,24 @@
           <div class="stimCtrls" id="stimCtrlsCircle" style="display:none;">
             <label>Dot ms <input id="sDotMs" type="number" min="0" step="100" value="2000" class="miniNum"></label>
             <label>Expand ms <input id="sExpandMs" type="number" min="100" step="50" value="600" class="miniNum"></label>
+          </div>
+          <div class="stimCtrls">
+            <label><input id="sndEnabled" type="checkbox" checked> Sound</label>
+            <label>Volume <input id="sndVolume" type="range" min="0" max="1" step="0.01" value="0.55"></label>
+            <label>Tone
+              <select id="sndType" aria-label="Stimulus sound type">
+                <option value="boop">Boop (sine)</option>
+                <option value="buzz">Buzz (square)</option>
+                <option value="click">Click (noise)</option>
+              </select>
+            </label>
+            <label>Cue
+              <select id="sndCue" aria-label="Stimulus sound cue">
+                <option value="both">Dot + expand</option>
+                <option value="expand">Expand only</option>
+                <option value="dot">Dot only</option>
+              </select>
+            </label>
           </div>
         </div>
       </div>
@@ -740,6 +759,8 @@ function downloadCSV(){
    Buttons
 ========================= */
 btnStart.addEventListener('click', () => {
+  unlockStimulusAudio();
+  if(stimulusSound) stimulusSound.lastEventKey = '';
   runBlinkTimes = [];
   runSamples = [];
   browBaseline = null;
@@ -1021,6 +1042,10 @@ const cStep = document.getElementById('cStep');
 
 const sDotMs = document.getElementById('sDotMs');
 const sExpandMs = document.getElementById('sExpandMs');
+const sndEnabled = document.getElementById('sndEnabled');
+const sndVolume = document.getElementById('sndVolume');
+const sndType = document.getElementById('sndType');
+const sndCue = document.getElementById('sndCue');
 
 function stimClamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
 function stimLerp(a,b,t){ return a + (b-a)*t; }
@@ -1028,6 +1053,101 @@ function stimLerp(a,b,t){ return a + (b-a)*t; }
 function stimTime(nowPerf){
   return runActive ? (nowPerf - runStartMs) : nowPerf;
 }
+
+const stimulusSound = {
+  ctx: null,
+  master: null,
+  initialized: false,
+  lastEventKey: ''
+};
+
+function initStimulusAudio(){
+  if(stimulusSound.initialized) return;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if(!Ctx) return;
+  const ctx = new Ctx({ latencyHint: 'interactive' });
+  const master = ctx.createGain();
+  master.gain.value = 0;
+  master.connect(ctx.destination);
+  stimulusSound.ctx = ctx;
+  stimulusSound.master = master;
+  stimulusSound.initialized = true;
+  setStimulusVolume();
+}
+
+function setStimulusVolume(){
+  if(!stimulusSound.master) return;
+  const v = stimClamp(Number(sndVolume?.value ?? 0.55), 0, 1);
+  stimulusSound.master.gain.setValueAtTime(v, stimulusSound.ctx.currentTime);
+}
+
+async function unlockStimulusAudio(){
+  initStimulusAudio();
+  if(!stimulusSound.ctx) return;
+  setStimulusVolume();
+  if(stimulusSound.ctx.state !== 'running'){
+    try{ await stimulusSound.ctx.resume(); }catch(_err){}
+  }
+}
+
+function playStimulusSound(eventKey){
+  if(!sndEnabled?.checked) return;
+  if(stimulusSound.lastEventKey === eventKey) return;
+  stimulusSound.lastEventKey = eventKey;
+
+  const cueMode = sndCue?.value || 'both';
+  const isDot = eventKey.includes(':dot:');
+  const isExpand = eventKey.includes(':expand:');
+  if((cueMode === 'dot' && !isDot) || (cueMode === 'expand' && !isExpand)) return;
+  if(!stimulusSound.ctx || !stimulusSound.master) return;
+  if(stimulusSound.ctx.state !== 'running') return;
+
+  const ctx = stimulusSound.ctx;
+  const now = ctx.currentTime + 0.001;
+  const vol = stimClamp(Number(sndVolume?.value ?? 0.55), 0, 1);
+  const baseHz = stimClamp(Number((800 + Math.random()*700).toFixed(1)), 800, 1500);
+  const jitter = 1 + ((Math.random()*2 - 1) * 0.05);
+  const freq = baseHz * jitter;
+  const type = sndType?.value || 'boop';
+
+  if(type === 'click'){
+    const dur = 0.06;
+    const frames = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for(let i=0;i<frames;i++){
+      const env = 1 - (i / frames);
+      data[i] = ((Math.random() * 2) - 1) * env;
+    }
+    const src = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    src.buffer = buffer;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.50 * vol, now + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    src.connect(gain);
+    gain.connect(stimulusSound.master);
+    src.start(now);
+    src.stop(now + dur + 0.01);
+    return;
+  }
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  const wave = (type === 'buzz') ? 'square' : 'sine';
+  const dur = (wave === 'square') ? 0.09 : 0.08;
+  osc.type = wave;
+  osc.frequency.setValueAtTime(freq, now);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.55 * vol, now + 0.004);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+  osc.connect(gain);
+  gain.connect(stimulusSound.master);
+  osc.start(now);
+  osc.stop(now + dur + 0.01);
+}
+
+window.addEventListener('pointerdown', unlockStimulusAudio, { passive:true });
 
 function renderStimulus(nowPerf){
   // Unified stimulus renderer (run + idle preview)
@@ -1093,6 +1213,9 @@ function renderStimulus(nowPerf){
       ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
       currentStimPhase = 'dot';
       currentStimValue = 0;
+      if(runActive && t >= 0){
+        playStimulusSound(`${runStartMs}:dot:0`);
+      }
       return;
     }
 
@@ -1110,6 +1233,9 @@ function renderStimulus(nowPerf){
 
     currentStimPhase = (u>=1) ? 'black' : 'expand';
     currentStimValue = u;
+    if(runActive){
+      playStimulusSound(`${runStartMs}:expand:0`);
+    }
     return;
   }
 }
@@ -1123,6 +1249,10 @@ if(stimTypeSel){
   stimTypeSel.addEventListener('change', refreshStimControls);
 }
 refreshStimControls();
+if(sndVolume){
+  sndVolume.addEventListener('input', setStimulusVolume);
+  sndVolume.addEventListener('change', setStimulusVolume);
+}
 
 
 let selected = 'cam';     // 'cam' | 'stim' | 'graph'
