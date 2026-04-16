@@ -1,0 +1,1279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Blink Run + 30s Stimulus</title>
+  <style>
+    :root{
+      --bg:#0a0a0a;
+      --txt:#f3f3f3;
+      --muted:#bdbdbd;
+      --border: rgba(255,255,255,.16);
+      --shadow: 0 12px 30px rgba(0,0,0,.35);
+      --radius: 18px;
+    }
+    html,body{height:100%; margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; overflow:hidden;}
+/* Mobile safe-area + prevent bottom controls being cut off */
+@supports (height: 100svh){ .app{ height:100svh; } }
+
+    .app{height:100vh; display:flex; flex-direction:column; overflow:hidden;}
+
+    /* Stage (Zoom-ish) */
+    .stageWrap{flex:1; min-height:0; display:flex; flex-direction:column; padding:14px; gap:12px; padding-bottom: 18px;}
+
+    /* Selected stage layout (main + two thumbnails) */
+    .stage2{
+      flex:1;
+      display:grid;
+      grid-template-columns: 1fr 320px;
+      gap:12px;
+      align-items:stretch;
+    }
+
+    .stage2{
+      height:100%;
+      min-height:0;
+    }
+    .slotMain, .slotSide, .slotThumb{
+      min-height:0;
+    }
+    .slotMain > .panel, .slotThumb > .panel{
+      height:100%;
+      min-height:0;
+    }
+
+    .slotMain, .slotThumb{
+      border-radius: var(--radius);
+    }
+    .slotMain > .panel{
+      height:100%;
+      min-height: 420px;
+    }
+    .slotSide{
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      height:100%;
+    }
+    .slotThumb{
+      flex:1;
+      min-height: 200px;
+    }
+    .slotThumb > .panel{
+      height:100%;
+      min-height: 0;
+    }
+    .panel.isThumb{
+      transform: scale(0.96);
+      transform-origin: center;
+      filter: saturate(0.95);
+    }
+    .panel.isSelected{
+      outline: 3px solid rgba(255,255,255,0.10);
+      outline-offset: -3px;
+    }
+    .panelTitle.selectable{
+      cursor:pointer;
+    }
+
+    .graphModeBtn{
+      position:absolute;
+      right:14px;
+      top:12px;
+      z-index:4;
+      appearance:none;
+      border:1px solid var(--border);
+      background:rgba(0,0,0,.55);
+      color:#fff;
+      padding:8px 10px;
+      border-radius:12px;
+      font-weight:950;
+      letter-spacing:.2px;
+      cursor:pointer;
+      box-shadow: var(--shadow);
+      user-select:none;
+    }
+    .graphModeBtn.hold{
+      color:#ffd1d1;
+    }
+    @media (max-width: 1100px){
+      .stage2{ grid-template-columns: 1fr; }
+      .slotSide{ flex-direction:row; }
+      .slotThumb{ min-height: 180px; }
+    }
+
+    .stage{flex:1; display:grid; gap:12px;}
+    .stage.split{grid-template-columns: 1.2fr 1fr;}
+    .stage.triple{grid-template-columns: 1fr 1fr 1fr;}
+    .stage.focus{grid-template-columns: 1fr;}
+
+    .panel{
+      position:relative;
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      background: radial-gradient(1200px 800px at 20% 10%, rgba(255,255,255,.06), rgba(255,255,255,0)),
+                  linear-gradient(#0b0b0b,#060606);
+      overflow:hidden;
+      box-shadow: var(--shadow);
+      min-height:0;
+    }
+    .panelTitle{
+      position:absolute; left:14px; top:12px;
+      font-weight:900; letter-spacing:.3px;
+      padding:8px 10px; border-radius:12px;
+      background:rgba(0,0,0,.55); border:1px solid var(--border);
+      z-index: 3;
+    }
+    .hint{
+      position:absolute; left:14px; bottom:12px;
+      padding:10px 12px; border-radius:12px;
+      background:rgba(0,0,0,.55); border:1px solid var(--border);
+      color:var(--muted); font-size:13px;
+      max-width: 82%;
+      z-index: 3;
+    }
+    .runOverlay{
+      position:absolute; right:14px; top:12px;
+      padding:10px 12px; border-radius:12px;
+      background:rgba(0,0,0,.55); border:1px solid var(--border);
+      text-align:right;
+      min-width: 230px;
+      z-index: 3;
+    }
+    .runOverlay .big{font-size:18px; font-weight:950;}
+    .runOverlay .small{font-size:12px; color:var(--muted);}
+
+    #video{display:none;}
+    #camCanvas,#stimCanvas,#graphCanvas{width:100%; height:100%; display:block;}
+    #stimCanvas{background:#fff;}
+
+    .hidden{display:none !important;}
+
+    /* Status (inside CAMERA panel footer) */
+    .statusInline{
+      position:absolute;
+      left:14px; right:14px; bottom:12px;
+      border:1px solid var(--border); border-radius:14px; padding:10px 12px;
+      background:rgba(0,0,0,.60); box-shadow: var(--shadow);
+      min-width: 0; max-width: calc(100% - 28px);
+      z-index: 3;
+    }
+    .statusInline b{color:#ff6b6b;}
+    .statusInline .muted{color:var(--muted); font-size:12px; margin-top:6px;}
+
+    
+    @media (max-width: 520px){
+      .statusInline{ font-size: 12px; line-height: 1.2; }
+      .statusInline .muted{ font-size: 11px; }
+    }
+/* Bottom control bar (Zoom-ish) */
+    .bar{
+      flex:0 0 auto;
+      position:sticky; bottom:0;
+      border-top:1px solid var(--border);
+      background:linear-gradient(#070707, #0c0c0c);
+      padding:10px 12px;
+      display:flex; gap:10px; align-items:center; justify-content:space-between;
+      z-index: 9;
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+      max-height: 44vh;
+      overflow:auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .btn{
+      appearance:none; border:1px solid var(--border); background:#000; color:#fff;
+      padding:10px 14px; border-radius:12px; font-weight:900; letter-spacing:.2px;
+      box-shadow: var(--shadow);
+      cursor:pointer; user-select:none;
+    }
+    .btn:disabled{opacity:.45; cursor:not-allowed;}
+    .group{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
+    .chip{
+      border:1px solid var(--border); border-radius:12px; padding:10px 12px;
+      background:rgba(0,0,0,.55); box-shadow: var(--shadow);
+      display:flex; gap:10px; align-items:center;
+    }
+    label{display:flex; gap:8px; align-items:center; font-weight:800;}
+    input[type="checkbox"]{transform:scale(1.1);}
+    select{
+      background:#000; color:#fff; border:1px solid var(--border);
+      border-radius:10px; padding:8px 10px; font-weight:900;
+    }
+    details summary{list-style:none; cursor:pointer; font-weight:950;}
+    details summary::-webkit-details-marker{display:none;}
+
+    @media (max-width: 1100px){
+      .stage.split{grid-template-columns: 1fr;}
+      .stage.triple{grid-template-columns: 1fr;}
+      .statusInline{position:static; margin:14px;}
+    }
+  
+  .miniNum{
+    width:92px;
+    background:rgba(0,0,0,0.45);
+    color:#fff;
+    border:1px solid rgba(255,255,255,0.16);
+    border-radius:12px;
+    padding:8px 10px;
+    font-weight:850;
+    outline:none;
+  }
+  .chip label{ display:flex; align-items:center; gap:8px; }
+
+
+    /* Stimulus control overlay inside the stimulus panel (corner dropdown) */
+    .stimUI{
+      position:absolute;
+      left:14px;
+      top:12px;
+      z-index:5;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      padding:10px 12px;
+      border:1px solid var(--border);
+      background:rgba(0,0,0,.55);
+      border-radius:14px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(6px);
+      max-width: min(520px, calc(100% - 28px));
+    }
+    .stimHdr{display:flex; gap:10px; align-items:center; justify-content:space-between;}
+    .stimLabel{font-weight:950; letter-spacing:.2px; opacity:.95;}
+    .stimBody{display:flex; gap:10px; flex-wrap:wrap;}
+    .stimCtrls{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+    .stimUI select{ padding:8px 10px; border-radius:12px; font-weight:950; }
+
+    /* Full-screen stimulus moment during trial start */
+    .panel.fullscreenStim{
+      position:fixed !important;
+      inset:0 !important;
+      z-index:9999 !important;
+      border-radius:0 !important;
+      border:none !important;
+      box-shadow:none !important;
+      background:#000 !important;
+    }
+    .panel.fullscreenStim .panelTitle{ display:none; }
+    .panel.fullscreenStim .stimUI{ display:none; }
+    .panel.fullscreenStim .runOverlay{ display:none; }
+
+</style>
+</head>
+<body>
+<div class="app">
+<div class="stageWrap">
+    <div class="stage2" id="stage2">
+      <div class="slotMain" id="slotMain"></div>
+      <div class="slotSide" id="slotSide">
+        <div class="slotThumb" id="slotThumb1"></div>
+        <div class="slotThumb" id="slotThumb2"></div>
+      </div>
+    </div>
+
+    <!-- Panels (moved into slots by JS) -->
+    <div class="panel" id="panelCam">
+      <div class="panelTitle selectable" data-sel="cam">CAMERA</div>
+      <canvas id="camCanvas"></canvas>
+      <video id="video" playsinline></video>
+      
+      <div class="statusInline" id="statusBox">
+        <div><b>Status</b>: <span id="statusText">initialising…</span></div>
+        <div>Blinks (session): <span id="blinkCount">0</span></div>
+        <div>Eye: <span id="eyeState">—</span> | EAR: <span id="earVal">—</span></div>
+        <div>Brows: <span id="browState">—</span> | Brow: <span id="browVal">—</span></div>
+        <div class="muted">Run blinks + timeseries recorded only during the 30s run.</div>
+        <div class="muted">If camera doesn’t start: serve via <b>localhost</b> (not file://) and allow permissions.</div>
+      </div>
+</div>
+
+    <div class="panel" id="panelStim">
+      <div class="panelTitle selectable" data-sel="stim">STIMULUS</div>
+      <canvas id="stimCanvas"></canvas>
+      <div class="stimUI">
+        <div class="stimHdr">
+          <span class="stimLabel">Stimulus</span>
+          <select id="stimType" aria-label="Stimulus type">
+            <option value="contrast">Contrast</option>
+            <option value="circle">Startle circle</option>
+          </select>
+        </div>
+        <div class="stimBody">
+          <div class="stimCtrls" id="stimCtrlsContrast">
+            <label>Low <input id="cLow" type="number" min="0" max="255" value="40" class="miniNum"></label>
+            <label>High <input id="cHigh" type="number" min="0" max="255" value="220" class="miniNum"></label>
+            <label>Step ms <input id="cStep" type="number" min="100" step="50" value="1000" class="miniNum"></label>
+          </div>
+          <div class="stimCtrls" id="stimCtrlsCircle" style="display:none;">
+            <label>Dot ms <input id="sDotMs" type="number" min="0" step="100" value="2000" class="miniNum"></label>
+            <label>Expand ms <input id="sExpandMs" type="number" min="100" step="50" value="600" class="miniNum"></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="runOverlay">
+        <div class="big">Run: <span id="runState">idle</span></div>
+        <div class="small">t = <span id="runTime">0.00</span>s / 30.00s</div>
+        <div class="small">Recorded blinks: <span id="runBlinks">0</span></div>
+      </div>
+    </div>
+
+    <div class="panel" id="panelGraph">
+      <div class="panelTitle selectable" data-sel="graph">GRAPH</div>
+      <button id="btnGraphMode" class="graphModeBtn" title="Toggle live/hold">LIVE</button>
+      <canvas id="graphCanvas"></canvas>
+      <div class="hint" style="right:14px; left:auto; text-align:right; max-width:70%;">
+        Red spikes = blinks • Blue line = brows (-1 low, 0 neutral, +1 raised)
+      </div>
+    </div>
+  </div>
+
+  <div class="bar">
+    <div class="group">
+      <button id="btnStart" class="btn">START 30s RUN</button>
+      <button id="btnStop" class="btn" disabled>STOP</button>
+      <button id="btnCSV" class="btn" disabled>CSV EXPORT</button>
+    </div>
+
+    <div class="group">
+      <div class="chip">
+        <details id="optMenu">
+          <summary>Options ▾</summary>
+          <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding-top:10px;">
+            <label><input id="chkTracking" type="checkbox" checked> Tracking</label>
+            <label><input id="chkMesh" type="checkbox" checked> Mesh</label>
+            <label><input id="chkEyes" type="checkbox" checked> Eyes</label>
+            <label><input id="chkGraphBlink" type="checkbox" checked> Blink</label>
+            <label><input id="chkGraphBrow" type="checkbox" checked> Brows</label>
+            <label><input id="chkAutoHide" type="checkbox" checked> Hide graph during run</label>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding-top:8px;"><label style="opacity:.9;">View <select id="layoutMode"><option value="split">Default (camera main)</option><option value="focusCam">Focus camera</option><option value="focusStim">Focus stimulus</option><option value="focusGraph">Focus graph</option></select></label></div></div>
+        </details>
+      </div>
+</div>
+
+</div>
+
+<!-- MediaPipe FaceMesh + Camera Utils (CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+
+<script>
+/* =========================
+   DOM
+========================= */
+const video = document.getElementById('video');
+const camCanvas = document.getElementById('camCanvas');
+const camCtx = camCanvas.getContext('2d');
+
+const stimCanvas = document.getElementById('stimCanvas');
+const stimCtx = stimCanvas.getContext('2d');
+
+const btnStart = document.getElementById('btnStart');
+const btnStop = document.getElementById('btnStop');
+const btnCSV = document.getElementById('btnCSV');
+
+const chkTracking = document.getElementById('chkTracking');
+const chkMesh = document.getElementById('chkMesh');
+const chkEyes = document.getElementById('chkEyes');
+const chkGraph = document.getElementById('chkGraph');
+const chkGraphBlink = document.getElementById('chkGraphBlink');
+const chkGraphBrow = document.getElementById('chkGraphBrow');
+
+const statusText = document.getElementById('statusText');
+const blinkCountEl = document.getElementById('blinkCount');
+const eyeStateEl = document.getElementById('eyeState');
+const earValEl = document.getElementById('earVal');
+
+const browStateEl = document.getElementById('browState');
+const browValEl = document.getElementById('browVal');
+const graphCanvas = document.getElementById('graphCanvas');
+const graphCtx = graphCanvas.getContext('2d');
+
+const runStateEl = document.getElementById('runState');
+const runTimeEl = document.getElementById('runTime');
+const runBlinksEl = document.getElementById('runBlinks');
+
+// Graph toggles
+function applyGraphVisibility(){
+  const show = (typeof chkGraph === 'undefined' || !chkGraph) ? true : !!chkGraph.checked;
+  graphCanvas.style.display = show ? 'block' : 'none';
+}
+if(chkGraph){
+  chkGraph.addEventListener('change', applyGraphVisibility);
+  chkGraphBlink.addEventListener('change', ()=>{});
+  chkGraphBrow.addEventListener('change', ()=>{});
+}
+
+/* =========================
+   Canvas resize
+========================= */
+function fitCanvasToElement(canvas){
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(2, Math.floor(rect.width * dpr));
+  const h = Math.max(2, Math.floor(rect.height * dpr));
+  if(canvas.width !== w || canvas.height !== h){
+    canvas.width = w; canvas.height = h;
+  }
+  return {w, h, dpr};
+}
+window.addEventListener('resize', () => { fitCanvasToElement(camCanvas); fitCanvasToElement(stimCanvas);
+    fitCanvasToElement(graphCanvas); fitCanvasToElement(graphCanvas); });
+
+/* =========================
+   Blink detection (EAR)
+   Tune these only if needed.
+========================= */
+const EAR_BLINK_THRESH = 0.345;      // MAX sensitivity (higher triggers easier)      // lower = harder to trigger
+const BLINK_MIN_DOWN_FRAMES = 1;     // frames below threshold
+const BLINK_MIN_UP_FRAMES = 1;       // recovery frames above threshold
+const EAR_SMOOTH_ALPHA = 0.75;       // more responsive smoothing       // smoothing (0..1)
+const EAR_BIAS = 0.030;            // subtract from raw EAR to fire earlier             // subtract from raw EAR to fire earlier (tune 0.00–0.03)
+const BROW_SMOOTH_ALPHA = 0.55;   // more responsive   // smoothing (0..1)
+const BROW_STATE_THRESH = 0.008;  // ULTRA sensitivity (smaller threshold)  // MAX sensitivity (smaller threshold)  // normalized threshold vs baseline (tune if needed)
+const BROW_BASELINE_MS = 1200;    // quicker baseline    // collect baseline at run start (ms)
+
+let earSmoothed = 0;
+let browSmoothed = 0;
+let browBaseline = null;
+let browBaselineSum = 0;
+let browBaselineN = 0;
+let browBaselineLive = null; // EMA baseline when idle
+let browState = 0;      // -1 lowered, 0 neutral, +1 raised
+let browImpulse = 0;    // fires on state change during run
+let downFrames = 0;
+let upFrames = 0;
+let blinkCount = 0;
+let blinkImpulse = 0;
+
+function dist(a,b){
+  const dx=a.x-b.x, dy=a.y-b.y;
+  return Math.hypot(dx,dy);
+}
+
+/* Landmark indices for EAR */
+const L_EYE = { p1:33,  p4:133, p2:160, p6:144, p3:158, p5:153 };
+const R_EYE = { p1:362, p4:263, p2:385, p6:380, p3:387, p5:373 };
+
+// Simple brow metric: eyebrow-to-eye-corner distance (more robust than eyelid refs),
+// normalized by inter-ocular distance (less sensitive to distance to camera).
+// Using eyebrow points left=70, right=296; eye corners: left 33/133, right 362/263.
+const L_BROW = 70;
+const R_BROW = 296;
+const L_EYE_OUT = 33;
+const L_EYE_IN  = 133;
+const R_EYE_IN  = 362;
+const R_EYE_OUT = 263;
+
+function browLiftNorm(lm){
+  // Reference = average eye-corner height (corners are stable during blinks)
+  const iod = dist(lm[L_EYE_OUT], lm[R_EYE_OUT]) + 1e-6; // inter-ocular distance
+  const leftEyeRefY  = 0.5 * (lm[L_EYE_OUT].y + lm[L_EYE_IN].y);
+  const rightEyeRefY = 0.5 * (lm[R_EYE_OUT].y + lm[R_EYE_IN].y);
+  const left  = (leftEyeRefY  - lm[L_BROW].y) / iod;
+  const right = (rightEyeRefY - lm[R_BROW].y) / iod;
+  return 0.5 * (left + right); // higher => brows are higher (more lift)
+}
+
+function eyeEAR(lm, eye){
+  const p1 = lm[eye.p1], p4 = lm[eye.p4];
+  const p2 = lm[eye.p2], p6 = lm[eye.p6];
+  const p3 = lm[eye.p3], p5 = lm[eye.p5];
+  const horiz = dist(p1,p4);
+  const vert = dist(p2,p6) + dist(p3,p5);
+  return horiz > 1e-6 ? (vert / (2*horiz)) : 0;
+}
+
+/* =========================
+   Run / logging
+========================= */
+const RUN_MS = 30000;
+const INSTRUCT_MS = 3000;
+const CIRCLE_EXPAND_MS = 420; // “startling” expansion time
+const DOT_MS = 2000;        // show a tiny center dot before expansion
+const DOT_RADIUS_PX = 3;   // dot radius in CSS pixels (scaled by DPR)
+
+let runActive = false;
+let currentStimType = 'contrast';
+let currentStimValue = 0;
+let currentStimPhase = '';
+
+let runStartMs = 0;
+let runStopMs = 0;
+let runBlinkTimes = [];       // ms since runStart
+let runSamples = [];          // per-frame series during run
+let liveSamples = [];         // rolling live series (always on)
+const LIVE_WINDOW_MS = 12000; // idle graph window (ms)
+let graphMode = 'live';       // 'live' or 'lastTrial'
+
+let stopHandle = null;
+
+/* =========================
+   Stimulus rendering
+   - white + text until 3s
+   - then expanding black circle that fully covers and stays black
+========================= */
+function drawStimulus(nowPerf){
+  const {w, h, dpr} = fitCanvasToElement(stimCanvas);
+    fitCanvasToElement(graphCanvas);
+  stimCtx.setTransform(1,0,0,1,0,0);
+  stimCtx.clearRect(0,0,w,h);
+
+  // default white background
+  stimCtx.fillStyle = "#ffffff";
+  stimCtx.fillRect(0,0,w,h);
+
+  if(!runActive) return;
+
+  const t = nowPerf - runStartMs; // ms
+
+  if(t < INSTRUCT_MS){
+    // instruction text
+    stimCtx.fillStyle = "#000";
+    stimCtx.textAlign = "center";
+    stimCtx.textBaseline = "middle";
+    stimCtx.font = `${Math.floor(Math.min(w,h)*0.06)}px system-ui, -apple-system, Segoe UI, Roboto`;
+    stimCtx.fillText("focus on the screen", w/2, h/2);
+    return;
+  }
+
+  // NEW: center dot lure phase (2s) before the expanding circle
+  if(t < INSTRUCT_MS + DOT_MS){
+    const cx = w/2, cy = h/2;
+    const r = DOT_RADIUS_PX * dpr;
+    stimCtx.fillStyle = "#000000";
+    stimCtx.beginPath();
+    stimCtx.arc(cx, cy, r, 0, Math.PI*2);
+    stimCtx.fill();
+    return;
+  }
+
+  // circle phase: expand then remain black
+  const local = t - INSTRUCT_MS - DOT_MS;
+  const cx = w/2, cy = h/2;
+  const maxR = Math.hypot(w,h);
+
+  let r = maxR;
+  if(local < CIRCLE_EXPAND_MS){
+    const u = Math.max(0, Math.min(1, local / CIRCLE_EXPAND_MS));
+    // fast ease-in (snap)
+    const eased = 1 - Math.pow(1-u, 3);
+    r = eased * maxR;
+  }
+
+  // draw black circle
+  stimCtx.fillStyle = "#000000";
+  stimCtx.beginPath();
+  stimCtx.arc(cx, cy, r, 0, Math.PI*2);
+  stimCtx.fill();
+
+  // once circle covers, fill full black to avoid edge artifacts
+  if(local >= CIRCLE_EXPAND_MS){
+    stimCtx.fillRect(0,0,w,h);
+  }
+}
+
+function updateRunHUD(nowPerf){
+  if(!runActive){
+    runStateEl.textContent = "idle";
+    runTimeEl.textContent = "0.00";
+    runBlinksEl.textContent = String(runBlinkTimes.length);
+    return;
+  }
+  const t = Math.max(0, nowPerf - runStartMs);
+  runStateEl.textContent = "running";
+  runTimeEl.textContent = (t/1000).toFixed(2);
+  runBlinksEl.textContent = String(runBlinkTimes.length);
+}
+
+
+function drawGraph(nowPerf){
+  // Graph always runs. When idle, show last LIVE_WINDOW_MS.
+  const {w, h} = fitCanvasToElement(graphCanvas);
+  graphCtx.setTransform(1,0,0,1,0,0);
+  graphCtx.clearRect(0,0,w,h);
+
+  // grid
+  graphCtx.strokeStyle = "rgba(255,255,255,0.13)";
+  graphCtx.lineWidth = 1;
+  for(let i=1;i<6;i++){
+    const y = (i/6)*h;
+    graphCtx.beginPath(); graphCtx.moveTo(0,y); graphCtx.lineTo(w,y); graphCtx.stroke();
+  }
+
+  const hasTrial = (runSamples && runSamples.length && (runActive || (runStopMs > runStartMs)));
+  const wantTrial = runActive ? true : (graphMode === 'lastTrial' && hasTrial);
+
+  const dur = wantTrial ? RUN_MS : LIVE_WINDOW_MS;
+
+  // Determine time window
+  let t0, tEnd;
+  if(wantTrial){
+    tEnd = runActive ? (nowPerf - runStartMs) : Math.min(RUN_MS, (runStopMs - runStartMs));
+    t0 = Math.max(0, tEnd - RUN_MS);
+  }else{
+    tEnd = nowPerf;
+    t0 = tEnd - LIVE_WINDOW_MS;
+  }
+
+  const xOf = (t) => ((t - t0) / dur) * w;
+
+  // Labels
+  graphCtx.fillStyle = "rgba(255,255,255,0.65)";
+  graphCtx.font = "12px system-ui, -apple-system, Segoe UI, Roboto";
+  graphCtx.fillText(wantTrial ? "Trial trace (frozen)" : "Live trace (last 12s)", 10, 18);
+
+  // If nothing to show yet
+  if(!wantTrial && (!liveSamples || liveSamples.length < 2)){
+    graphCtx.fillStyle = "rgba(255,255,255,0.45)";
+    graphCtx.fillText("Waiting for face…", 10, 36);
+    return;
+  }
+
+  const yMid = h*0.60;
+  const yAmp = h*0.25;
+
+  // Blue: brow state
+  if(!chkGraphBrow || chkGraphBrow.checked){
+    graphCtx.strokeStyle = "rgba(80,170,255,0.95)";
+    graphCtx.lineWidth = 2;
+    graphCtx.beginPath();
+    let started = false;
+
+    if(wantTrial){
+      for(const s of runSamples){
+        if(s.t < t0) continue;
+        const x = xOf(s.t);
+        const y = yMid - (s.browState||0)*yAmp;
+        if(!started){ graphCtx.moveTo(x,y); started=true; }
+        else graphCtx.lineTo(x,y);
+      }
+    }else{
+      for(const s of liveSamples){
+        if(s.tAbs < t0) continue;
+        const x = xOf(s.tAbs);
+        const y = yMid - (s.browState||0)*yAmp;
+        if(!started){ graphCtx.moveTo(x,y); started=true; }
+        else graphCtx.lineTo(x,y);
+      }
+    }
+    graphCtx.stroke();
+  }
+
+  // Red: blink spikes
+  if(!chkGraphBlink || chkGraphBlink.checked){
+    graphCtx.strokeStyle = "rgba(255,60,60,0.95)";
+    graphCtx.lineWidth = 2;
+
+    if(wantTrial){
+      for(const s of runSamples){
+        if(s.t < t0) continue;
+        if(s.blinkImpulse){
+          const x = xOf(s.t);
+          graphCtx.beginPath();
+          graphCtx.moveTo(x, h*0.10);
+          graphCtx.lineTo(x, h*0.33);
+          graphCtx.stroke();
+        }
+      }
+    }else{
+      for(const s of liveSamples){
+        if(s.tAbs < t0) continue;
+        if(s.blinkImpulse){
+          const x = xOf(s.tAbs);
+          graphCtx.beginPath();
+          graphCtx.moveTo(x, h*0.10);
+          graphCtx.lineTo(x, h*0.33);
+          graphCtx.stroke();
+        }
+      }
+    }
+  }
+
+  // baseline lines
+  graphCtx.strokeStyle = "rgba(255,255,255,0.10)";
+  graphCtx.lineWidth = 1;
+  graphCtx.beginPath(); graphCtx.moveTo(0, yMid); graphCtx.lineTo(w, yMid); graphCtx.stroke();
+}
+
+/* =========================
+   CSV Export (clean)
+   Exports:
+   1) run_samples: t_ms, ear, eyeOpen(ear), blinkImpulse
+   2) blink_events: index, t_ms
+========================= */
+function downloadCSV(){
+  const dur = Math.round(runStopMs - runStartMs);
+  const startedIso = new Date().toISOString(); // “export time” marker
+
+  const lines = [];
+  lines.push("section,run_started_iso,run_duration_ms,total_blinks");
+  lines.push(`meta,${startedIso},${dur},${runBlinkTimes.length}`);
+  lines.push("");
+
+  lines.push("run_samples");
+  lines.push("t_ms,ear,eyeOpen,blinkImpulse,browLift,browState,browImpulse");
+  for(const s of runSamples){
+    lines.push(`${Math.round(s.t)},${s.ear.toFixed(4)},${s.ear.toFixed(4)},${s.blinkImpulse},${s.brow.toFixed(4)},${s.browState},${s.browImpulse}`);
+  }
+  lines.push("");
+
+  lines.push("blink_events");
+  lines.push("blink_index,t_ms");
+  for(let i=0;i<runBlinkTimes.length;i++){
+    lines.push(`${i+1},${Math.round(runBlinkTimes[i])}`);
+  }
+
+  const blob = new Blob([lines.join("\n")], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `blink_run_${Date.now()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  URL.revokeObjectURL(a.href);
+  a.remove();
+}
+
+/* =========================
+   Buttons
+========================= */
+btnStart.addEventListener('click', () => {
+  runBlinkTimes = [];
+  runSamples = [];
+  browBaseline = null;
+  browBaselineSum = 0;
+  browBaselineN = 0;
+  browState = 0;
+
+  runActive = true;
+  runStartMs = performance.now();
+  runStopMs = runStartMs;
+
+  btnStart.disabled = true;
+  btnStop.disabled = false;
+  btnCSV.disabled = true;
+
+  if(stopHandle) clearTimeout(stopHandle);
+  stopHandle = setTimeout(() => stopRun(true), RUN_MS);
+});
+
+function stopRun(auto=false){
+  if(!runActive) return;
+  runActive = false;
+  runStopMs = performance.now();
+
+  btnStart.disabled = false;
+  btnStop.disabled = true;
+  btnCSV.disabled = false;
+}
+btnStop.addEventListener('click', () => stopRun(false));
+btnCSV.addEventListener('click', downloadCSV);
+
+/* =========================
+   FaceMesh constructor-safe setup
+   (works across CDN builds)
+========================= */
+statusText.textContent = "requesting camera…";
+
+function getFaceMeshCtor(){
+  // Some builds expose FaceMesh as a function, others as FaceMesh.FaceMesh
+  if(typeof window.FaceMesh === "function") return window.FaceMesh;
+  if(window.FaceMesh && typeof window.FaceMesh.FaceMesh === "function") return window.FaceMesh.FaceMesh;
+  return null;
+}
+const FaceMeshCtor = getFaceMeshCtor();
+
+if(!FaceMeshCtor){
+  statusText.textContent = "FaceMesh failed to load (CDN)";
+  throw new Error("FaceMesh constructor not found. Check CDN scripts.");
+}
+
+const faceMesh = new FaceMeshCtor({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+});
+
+faceMesh.setOptions({
+  maxNumFaces: 1,
+  refineLandmarks: true,
+  minDetectionConfidence: 0.55,
+  minTrackingConfidence: 0.55
+});
+
+faceMesh.onResults((results) => {
+  const {w, h} = fitCanvasToElement(camCanvas);
+
+  camCtx.setTransform(1,0,0,1,0,0);
+  camCtx.clearRect(0,0,w,h);
+
+  if(results.image){
+    camCtx.drawImage(results.image, 0, 0, w, h);
+  }
+
+  blinkImpulse = 0;
+  browImpulse = 0;
+
+  if(!chkTracking.checked){
+    statusText.textContent = "tracking OFF";
+    eyeStateEl.textContent = "—";
+    earValEl.textContent = "—";
+    browStateEl.textContent = "—";
+    browValEl.textContent = "—";
+    return;
+  }
+
+  if(!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0){
+    statusText.textContent = "no face";
+    eyeStateEl.textContent = "—";
+    earValEl.textContent = "—";
+    browStateEl.textContent = "—";
+    browValEl.textContent = "—";
+    earSmoothed = earSmoothed*(1-EAR_SMOOTH_ALPHA);
+    return;
+  }
+
+  const lm = results.multiFaceLandmarks[0];
+  statusText.textContent = "face locked";
+
+  // EAR
+  const earL = eyeEAR(lm, L_EYE);
+  const earR = eyeEAR(lm, R_EYE);
+  const ear = (earL + earR) * 0.5;
+  earSmoothed = (1 - EAR_SMOOTH_ALPHA)*earSmoothed + EAR_SMOOTH_ALPHA*Math.max(0, (ear - EAR_BIAS));
+  earValEl.textContent = earSmoothed.toFixed(3);
+
+  // Eyebrow lift (normalized)
+  const brow = browLiftNorm(lm);
+  browSmoothed = (1 - BROW_SMOOTH_ALPHA)*browSmoothed + BROW_SMOOTH_ALPHA*brow;
+  browValEl.textContent = browSmoothed.toFixed(3);
+
+  // Blink debounce FSM
+  if(earSmoothed < EAR_BLINK_THRESH){
+    downFrames++;
+    upFrames = 0;
+  } else {
+    upFrames++;
+  }
+  if(downFrames >= BLINK_MIN_DOWN_FRAMES && upFrames >= BLINK_MIN_UP_FRAMES){
+    blinkCount++;
+    blinkImpulse = 1;
+    downFrames = 0;
+    upFrames = 0;
+  }
+
+  
+  // Brow baseline + state
+  // During run: baseline gathered at run start for stable trial states.
+  // When idle: keep an EMA baseline so the brow graph can move live.
+  const eyeOpenNow = (earSmoothed >= EAR_BLINK_THRESH);
+
+  if(runActive){
+    const tRun = performance.now() - runStartMs;
+
+    if(browBaseline === null){
+      // gather baseline early in run, but only while eyes are open
+      if(tRun <= BROW_BASELINE_MS){
+        if(eyeOpenNow){
+          browBaselineSum += browSmoothed;
+          browBaselineN += 1;
+        }
+      } else {
+        browBaseline = (browBaselineN > 0) ? (browBaselineSum / browBaselineN) : browSmoothed;
+      }
+    }
+
+    // classify only when eye is open; otherwise keep last browState
+    if(browBaseline !== null && eyeOpenNow){
+      const d = browSmoothed - browBaseline;
+      let newState = 0;
+      if(d > BROW_STATE_THRESH) newState = +1;
+      else if(d < -BROW_STATE_THRESH) newState = -1;
+
+      if(newState !== browState){
+        browState = newState;
+        browImpulse = 1;
+      }
+    }
+  } else {
+    // IDLE: adaptive EMA baseline so brows respond live
+    if(eyeOpenNow){
+      if(browBaselineLive === null) browBaselineLive = browSmoothed;
+      // slow EMA baseline (tracks your natural resting brow position)
+      browBaselineLive = 0.985*browBaselineLive + 0.015*browSmoothed;
+
+      const d = browSmoothed - browBaselineLive;
+      let newState = 0;
+      if(d > BROW_STATE_THRESH) newState = +1;
+      else if(d < -BROW_STATE_THRESH) newState = -1;
+      browState = newState;
+    }
+    // reset trial baseline accumulators only
+    browBaseline = null;
+    browBaselineSum = 0;
+    browBaselineN = 0;
+  }
+
+browStateEl.textContent = (browState === 1) ? "RAISED" : (browState === -1) ? "LOWERED" : "NEUTRAL";
+
+  blinkCountEl.textContent = String(blinkCount);
+  eyeStateEl.textContent = (earSmoothed < EAR_BLINK_THRESH) ? "CLOSED" : "OPEN";
+
+  // Run logging (only during run)
+  if(runActive){
+    const t = performance.now() - runStartMs;
+    runSamples.push({ t, ear: earSmoothed, blinkImpulse, brow: browSmoothed, browState, browImpulse });
+    if(blinkImpulse) runBlinkTimes.push(t);
+  }
+
+
+  // Live logging (always on)
+  {
+    const tAbs = performance.now();
+    liveSamples.push({ tAbs, blinkImpulse, browState, stimType: currentStimType, stimValue: currentStimValue, stimPhase: currentStimPhase });
+    const cutoff = tAbs - LIVE_WINDOW_MS;
+    while(liveSamples.length && liveSamples[0].tAbs < cutoff) liveSamples.shift();
+  }
+
+  // Mesh overlay (optional)
+  if(chkMesh.checked && typeof drawConnectors === "function"){
+    const tess = (window.FACEMESH_TESSELATION || (window.FaceMesh && window.FaceMesh.FACEMESH_TESSELATION));
+    if(tess){
+      drawConnectors(camCtx, lm, tess, {color:'rgba(90,255,140,0.35)', lineWidth:1});
+    }
+  }
+
+  // Eye points (optional)
+  if(chkEyes.checked){
+    const isClosed = earSmoothed < EAR_BLINK_THRESH;
+    camCtx.fillStyle = isClosed ? "rgba(80,170,255,0.95)" : "rgba(255,60,60,0.95)";
+    const pts = [33,133,159,145,158,153, 362,263,386,374,387,373];
+    for(const idx of pts){
+      const p = lm[idx];
+      camCtx.beginPath();
+      camCtx.arc(p.x*w, p.y*h, 4, 0, Math.PI*2);
+      camCtx.fill();
+    }
+  }
+});
+
+/* =========================
+   Camera init
+========================= */
+const camera = new Camera(video, {
+  onFrame: async () => { await faceMesh.send({image: video}); },
+  width: 1280,
+  height: 720
+});
+
+(async function init(){
+  try{
+    fitCanvasToElement(camCanvas);
+    fitCanvasToElement(stimCanvas);
+    fitCanvasToElement(graphCanvas);
+    applyGraphVisibility();
+
+    await camera.start();
+    statusText.textContent = "warming up…";
+
+    function tick(){
+      const now = performance.now();
+      if(typeof window.renderStimulus === 'function') { window.renderStimulus(now); } else { drawStimulus(now); }
+      updateRunHUD(now);
+      drawGraph(now);
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }catch(err){
+    console.error(err);
+    statusText.textContent = "camera error (use localhost/https + allow permission)";
+  }
+})();
+</script>
+
+<script>
+/* =========================
+   UI layout wiring (v6 stage + thumbs)
+========================= */
+const slotMain = document.getElementById('slotMain');
+const slotThumb1 = document.getElementById('slotThumb1');
+const slotThumb2 = document.getElementById('slotThumb2');
+
+const panelCam = document.getElementById('panelCam');
+const panelStim = document.getElementById('panelStim');
+const panelGraph = document.getElementById('panelGraph');
+
+const layoutMode = document.getElementById('layoutMode');
+const chkAutoHide = document.getElementById('chkAutoHide');
+const btnGraphMode = document.getElementById('btnGraphMode');
+
+// =========================
+// Minimal StimulusEngine (v1): Contrast + Startle circle
+// Keeps detection untouched. Renders into global stimCanvas.
+// =========================
+const stimTypeSel = document.getElementById('stimType');
+const stimCtrlsContrast = document.getElementById('stimCtrlsContrast');
+const stimCtrlsCircle = document.getElementById('stimCtrlsCircle');
+
+const cLow = document.getElementById('cLow');
+const cHigh = document.getElementById('cHigh');
+const cStep = document.getElementById('cStep');
+
+const sDotMs = document.getElementById('sDotMs');
+const sExpandMs = document.getElementById('sExpandMs');
+
+function stimClamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+function stimLerp(a,b,t){ return a + (b-a)*t; }
+
+function stimTime(nowPerf){
+  return runActive ? (nowPerf - runStartMs) : nowPerf;
+}
+
+function renderStimulus(nowPerf){
+  // Unified stimulus renderer (run + idle preview)
+  const {w,h,dpr} = fitCanvasToElement(stimCanvas);
+  const ctx = stimCanvas.getContext('2d');
+  ctx.setTransform(1,0,0,1,0,0);
+
+  const type = stimTypeSel ? stimTypeSel.value : 'contrast';
+  currentStimType = type;
+  currentStimValue = 0;
+  currentStimPhase = '';
+
+  // Time base: during run we want 0..RUN, otherwise just use nowPerf for preview animation
+  const tBase = runActive ? (nowPerf - runStartMs) : nowPerf;
+
+  // Background default
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0,0,w,h);
+
+  // During run, enforce the initial instruction screen (3s)
+  if(runActive && tBase < INSTRUCT_MS){
+    ctx.fillStyle = '#000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `${Math.floor(Math.min(w,h)*0.06)}px system-ui, -apple-system, Segoe UI, Roboto`;
+    ctx.fillText('focus on the screen', w/2, h/2);
+    currentStimPhase = 'instruction';
+    return;
+  }
+
+  // After instruction, start stimulus at t=0 for the chosen type
+  const t = runActive ? (tBase - INSTRUCT_MS) : tBase;
+
+  if(type === 'contrast'){
+    const low = stimClamp(Number(cLow?.value ?? 40), 0, 255);
+    const high = stimClamp(Number(cHigh?.value ?? 220), 0, 255);
+    const step = Math.max(50, Number(cStep?.value ?? 1000));
+    const phase = (Math.floor(t/step) % 2);
+    const val = phase ? high : low;
+
+    ctx.fillStyle = `rgb(${val},${val},${val})`;
+    ctx.fillRect(0,0,w,h);
+
+    currentStimValue = val;
+    currentStimPhase = phase ? 'high' : 'low';
+    return;
+  }
+
+  if(type === 'circle'){
+    const dotMs = Math.max(0, Number(sDotMs?.value ?? 2000));
+    const expandMs = Math.max(100, Number(sExpandMs?.value ?? 600));
+
+    // Off-white background so the black dot/circle pop
+    ctx.fillStyle='rgb(245,245,245)';
+    ctx.fillRect(0,0,w,h);
+
+    const cx=w/2, cy=h/2;
+
+    if(t < dotMs){
+      // gaze lure dot
+      const r = DOT_RADIUS_PX * dpr;
+      ctx.fillStyle='rgb(0,0,0)';
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+      currentStimPhase = 'dot';
+      currentStimValue = 0;
+      return;
+    }
+
+    const u = stimClamp((t - dotMs) / expandMs, 0, 1);
+    const maxR = Math.hypot(w,h);
+    const r = stimLerp(8*dpr, maxR, u);
+
+    ctx.fillStyle='rgb(0,0,0)';
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+
+    // Once fully expanded, fill full black to guarantee full-screen coverage
+    if(u >= 1){
+      ctx.fillRect(0,0,w,h);
+    }
+
+    currentStimPhase = (u>=1) ? 'black' : 'expand';
+    currentStimValue = u;
+    return;
+  }
+}
+
+function refreshStimControls(){
+  const type = stimTypeSel ? stimTypeSel.value : 'contrast';
+  if(stimCtrlsContrast) stimCtrlsContrast.style.display = (type==='contrast') ? '' : 'none';
+  if(stimCtrlsCircle) stimCtrlsCircle.style.display = (type==='circle') ? '' : 'none';
+}
+if(stimTypeSel){
+  stimTypeSel.addEventListener('change', refreshStimControls);
+}
+refreshStimControls();
+
+
+let selected = 'cam';     // 'cam' | 'stim' | 'graph'
+let freezeGraph = false;  // freeze final trace after run
+let lastSelectedBeforeRun = 'cam';
+
+function setSelected(which){
+  selected = which;
+  if(!runActive) lastSelectedBeforeRun = which;
+
+  // Clear slots
+  slotMain.innerHTML = '';
+  slotThumb1.innerHTML = '';
+  slotThumb2.innerHTML = '';
+
+  const order = ['cam','stim','graph'].filter(x => x !== selected);
+  const pick = (k)=> (k==='cam'?panelCam:(k==='stim'?panelStim:panelGraph));
+
+  const mainPanel = pick(selected);
+  const t1 = pick(order[0]);
+  const t2 = pick(order[1]);
+
+  slotMain.appendChild(mainPanel);
+  slotThumb1.appendChild(t1);
+  slotThumb2.appendChild(t2);
+
+  // selected/thumbnail styling
+  for(const p of [panelCam,panelStim,panelGraph]){
+    p.classList.remove('isSelected','isThumb');
+  }
+  mainPanel.classList.add('isSelected');
+  t1.classList.add('isThumb');
+  t2.classList.add('isThumb');
+
+  // Resize canvases after DOM move
+  setTimeout(()=>{
+    fitCanvasToElement(camCanvas);
+    fitCanvasToElement(stimCanvas);
+    fitCanvasToElement(graphCanvas);
+  }, 0);
+}
+
+// Clicking titles selects
+document.querySelectorAll('.panelTitle.selectable').forEach(el=>{
+  el.addEventListener('click', ()=>{
+    const k = el.getAttribute('data-sel');
+    if(k) setSelected(k);
+  });
+});
+
+// Layout dropdown selects which panel is main
+if(layoutMode){
+  layoutMode.addEventListener('change', ()=>{
+    const v = layoutMode.value;
+    if(v === 'focusCam') setSelected('cam');
+    else if(v === 'focusStim') setSelected('stim');
+    else if(v === 'focusGraph') setSelected('graph');
+    else if(v === 'split'){ setSelected('cam'); } // default split: cam main
+    else { /* triple */ setSelected(selected); }
+  });
+}
+
+// During run: show a brief full-screen stimulus at the start.
+// Graph keeps recording in the background and we switch to Graph view after the run.
+function stimFullscreenDuration(){
+  const type = stimTypeSel ? stimTypeSel.value : 'contrast';
+  if(type === 'circle'){
+    const dotMs = Math.max(0, Number(sDotMs?.value ?? 2000));
+    const expandMs = Math.max(100, Number(sExpandMs?.value ?? 600));
+    return INSTRUCT_MS + dotMs + expandMs + 250;
+  }
+  // Contrast: just a quick full-screen flash window after instructions
+  return INSTRUCT_MS + 1200;
+}
+
+let stimFsTimer = null;
+function showStimFullscreen(ms){
+  clearTimeout(stimFsTimer);
+  panelStim.classList.add('fullscreenStim');
+  // Ensure stimulus canvas fits the full screen
+  setTimeout(()=>{ fitCanvasToElement(stimCanvas); }, 0);
+  stimFsTimer = setTimeout(()=>{
+    panelStim.classList.remove('fullscreenStim');
+    // Refit canvases back into their slots
+    fitCanvasToElement(camCanvas);
+    fitCanvasToElement(stimCanvas);
+    fitCanvasToElement(graphCanvas);
+  }, ms);
+}
+
+function applyRunViewStart(){
+  freezeGraph = false;
+
+  // Keep stimulus+graph as the blue-box thumbnails (camera stays main unless user chose otherwise)
+  // Optional: hide graph panel visuals during run if the user wants a cleaner run view.
+  if(chkAutoHide && chkAutoHide.checked){
+    panelGraph.style.visibility = 'hidden';
+  } else {
+    panelGraph.style.visibility = 'visible';
+  }
+
+  // Briefly take over the whole screen with the stimulus at trial start
+  showStimFullscreen(stimFullscreenDuration());
+}
+
+function applyRunViewStop(){
+  panelGraph.style.visibility = 'visible';
+  freezeGraph = true;
+  // After run, bring graph to the main (yellow) area automatically
+  setSelected('graph');
+  if(layoutMode) layoutMode.value = 'focusGraph';
+  fitCanvasToElement(graphCanvas);
+}
+
+// Hook run start without touching core logic
+btnStart.addEventListener('click', applyRunViewStart, {capture:true});
+
+// Wrap stopRun to restore view after run completes
+const _stopRun = stopRun;
+stopRun = function(auto=false){
+  _stopRun(auto);
+  if(!runActive){
+    applyRunViewStop();
+  }
+};
+
+// Patch drawGraph: always keep rendering so it is live when shown
+const _drawGraph = drawGraph;
+drawGraph = function(nowPerf){
+  _drawGraph(nowPerf);
+};
+
+// Init selection
+
+if(btnGraphMode){
+  const refreshBtn = ()=>{
+    const hold = (graphMode === 'lastTrial');
+    btnGraphMode.textContent = hold ? 'HOLD' : 'LIVE';
+    btnGraphMode.classList.toggle('hold', hold);
+  };
+  refreshBtn();
+  btnGraphMode.addEventListener('click', ()=>{
+    graphMode = (graphMode === 'live') ? 'lastTrial' : 'live';
+    refreshBtn();
+    // immediate redraw
+    drawGraph(performance.now());
+  });
+}
+
+setSelected('cam');
+if(layoutMode) layoutMode.value = 'split';
+</script>
+</body>
+</html>
