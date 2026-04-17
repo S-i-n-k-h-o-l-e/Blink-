@@ -317,7 +317,7 @@
               <select id="sndType" aria-label="Stimulus sound type">
                 <option value="boop">Boop (sine)</option>
                 <option value="buzz">Buzz (square)</option>
-                <option value="click">Click (noise)</option>
+                <option value="click">Horn burst (deep)</option>
               </select>
             </label>
             <label>Cue
@@ -1111,24 +1111,48 @@ function playStimulusSound(eventKey){
   const type = sndType?.value || 'boop';
 
   if(type === 'click'){
-    const dur = 0.06;
-    const frames = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    const dur = 0.13;
+    const hornBase = 115 + Math.random() * 20;
+
+    // Deep dual-oscillator "horn" body.
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const hornGain = ctx.createGain();
+    osc1.type = 'sawtooth';
+    osc2.type = 'square';
+    osc1.frequency.setValueAtTime(hornBase, now);
+    osc2.frequency.setValueAtTime(hornBase * 1.5, now);
+    hornGain.gain.setValueAtTime(0.0001, now);
+    hornGain.gain.exponentialRampToValueAtTime(0.80 * vol, now + 0.004);
+    hornGain.gain.exponentialRampToValueAtTime(0.20 * vol, now + 0.055);
+    hornGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    osc1.connect(hornGain);
+    osc2.connect(hornGain);
+    hornGain.connect(stimulusSound.master);
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + dur + 0.02);
+    osc2.stop(now + dur + 0.02);
+
+    // Small noisy transient to make the onset feel sudden.
+    const burstDur = 0.02;
+    const frames = Math.max(1, Math.floor(ctx.sampleRate * burstDur));
     const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
     const data = buffer.getChannelData(0);
     for(let i=0;i<frames;i++){
       const env = 1 - (i / frames);
-      data[i] = ((Math.random() * 2) - 1) * env;
+      data[i] = ((Math.random() * 2) - 1) * env * 0.6;
     }
     const src = ctx.createBufferSource();
-    const gain = ctx.createGain();
+    const burstGain = ctx.createGain();
     src.buffer = buffer;
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.50 * vol, now + 0.003);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-    src.connect(gain);
-    gain.connect(stimulusSound.master);
+    burstGain.gain.setValueAtTime(0.0001, now);
+    burstGain.gain.exponentialRampToValueAtTime(0.55 * vol, now + 0.002);
+    burstGain.gain.exponentialRampToValueAtTime(0.0001, now + burstDur);
+    src.connect(burstGain);
+    burstGain.connect(stimulusSound.master);
     src.start(now);
-    src.stop(now + dur + 0.01);
+    src.stop(now + burstDur + 0.01);
     return;
   }
 
